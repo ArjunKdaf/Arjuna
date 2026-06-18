@@ -4,7 +4,9 @@
 
 Arjuna is a Firefox 149.0.2 fork built as a personal vision for browser UX — not a production browser. It was created to explore ideas around workspaces, dual sidebars, auto-hiding UI, and a distraction-free browsing experience. This is the final release.
 
-![Arjuna](arjuna_logo.png)
+<p align="center">
+  <img src="arjuna_logo.png" alt="Arjuna" width="256">
+</p>
 
 ## What's Different
 
