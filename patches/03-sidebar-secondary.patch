@@ -1,0 +1,1929 @@
+diff --git a/browser/components/sidebar/SidebarSecondary.sys.mjs b/browser/components/sidebar/SidebarSecondary.sys.mjs
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/browser/components/sidebar/SidebarSecondary.sys.mjs
+@@ -0,0 +1,168 @@
++/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Based on Floorp Browser panel-sidebar (https://github.com/AkariNext/nicefox)
++ * Original code licensed under MPL 2.0.
++ */
++
++export class SidebarSecondary {
++  #data = null;
++  #document = null;
++
++  constructor(data, document) {
++    this.#data = data;
++    this.#document = document;
++  }
++
++  get #browserBox() {
++    return this.#document.getElementById("sidebar-secondary-browser-box");
++  }
++
++  get #sidebarBox() {
++    return this.#document.getElementById("sidebar-secondary-box");
++  }
++
++  get #browsers() {
++    return this.#document.querySelectorAll(".sidebar-secondary-browser");
++  }
++
++  getBrowser(id) {
++    return this.#document.getElementById(`sidebar-secondary-browser-${id}`);
++  }
++
++  changePanel(panelId) {
++    if (panelId === this.#data.selectedPanelId) {
++      this.#data.selectedPanelId = null;
++      if (this.#data.config.autoUnload) {
++        this.unloadPanel(panelId);
++      }
++      return;
++    }
++
++    const panel = this.#data.getPanel(panelId);
++    if (!panel) {
++      console.error(`SidebarSecondary: panel not found: ${panelId}`);
++      return;
++    }
++
++    this.#data.selectedPanelId = panelId;
++    this.#setSidebarWidth(panel);
++    this.#resetBrowsersFlex();
++    this.showPanel(panel);
++  }
++
++  showPanel(panel) {
++    const browser = this.getBrowser(panel.id);
++    if (browser) {
++      browser.setAttribute("flex", "1");
++      return;
++    }
++    this.#createBrowser(panel);
++  }
++
++  #createBrowser(panel) {
++    const container = this.#browserBox;
++    if (!container) return;
++
++    const browser = this.#document.createXULElement("browser");
++    browser.id = `sidebar-secondary-browser-${panel.id}`;
++    browser.classList.add("sidebar-secondary-browser");
++    browser.setAttribute("flex", "1");
++    browser.setAttribute("autoscroll", "false");
++    browser.setAttribute("disablehistory", "true");
++    browser.setAttribute("disablefullscreen", "true");
++    browser.setAttribute("tooltip", "aHTMLTooltip");
++    browser.setAttribute("autocompletepopup", "PopupAutoComplete");
++
++    let url;
++    if (panel.type === "static") {
++      const staticPanel = this.#data.getStaticPanel(panel.url);
++      url = staticPanel ? staticPanel.url : panel.url;
++      browser.setAttribute("type", "content");
++    } else if (panel.type === "web") {
++      url = panel.url;
++      browser.setAttribute("type", "content");
++      browser.setAttribute("remote", "true");
++      browser.setAttribute("maychangeremoteness", "true");
++      if (panel.userContextId) {
++        browser.setAttribute("usercontextid", panel.userContextId);
++      }
++    } else if (panel.type === "extension") {
++      url = "chrome://browser/content/webext-panels.xhtml";
++      browser.setAttribute("type", "content");
++      browser.setAttribute("remote", "true");
++      browser.setAttribute("maychangeremoteness", "true");
++      if (panel.extensionId) {
++        browser.addEventListener("DOMContentLoaded", () => {
++          try {
++            browser.contentWindow.loadPanel(panel.extensionId, panel.url, "sidebar");
++          } catch (e) {
++            console.error("SidebarSecondary: extension load error:", e);
++          }
++        }, { once: true });
++      }
++    }
++
++    if (url) {
++      browser.setAttribute("src", url);
++    }
++
++    container.appendChild(browser);
++  }
++
++  unloadPanel(panelId) {
++    const browser = this.getBrowser(panelId);
++    if (browser) {
++      browser.remove();
++    }
++    this.#data.selectedPanelId = null;
++  }
++
++  deletePanel(panelId) {
++    this.unloadPanel(panelId);
++    this.#data.removePanel(panelId);
++  }
++
++  openInMainWindow(panelId) {
++    const panel = this.#data.getPanel(panelId);
++    if (!panel || !panel.url) return;
++
++    let url = panel.url;
++    if (panel.type === "static") {
++      const staticPanel = this.#data.getStaticPanel(panel.url);
++      if (staticPanel) url = staticPanel.url;
++    }
++
++    const gBrowser = this.#document.defaultView.gBrowser;
++    gBrowser.addTab(url, {
++      triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
++      inBackground: false,
++      userContextId: panel.userContextId || undefined,
++    });
++  }
++
++  #resetBrowsersFlex() {
++    for (const browser of this.#browsers) {
++      browser.removeAttribute("flex");
++    }
++  }
++
++  #setSidebarWidth(panel) {
++    const width = this.#data.getPanelWidth(panel);
++    const box = this.#sidebarBox;
++    if (box) {
++      box.style.width = `${width}px`;
++    }
++  }
++
++  saveCurrentWidth() {
++    const box = this.#sidebarBox;
++    if (!box) return;
++    const width = parseInt(box.style.width || box.getAttribute("width"), 10);
++    if (width && this.#data.selectedPanelId) {
++      this.#data.updatePanel(this.#data.selectedPanelId, { width });
++    }
++  }
++}
+diff --git a/browser/components/sidebar/SidebarSecondaryData.sys.mjs b/browser/components/sidebar/SidebarSecondaryData.sys.mjs
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/browser/components/sidebar/SidebarSecondaryData.sys.mjs
+@@ -0,0 +1,212 @@
++/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Based on Floorp Browser panel-sidebar (https://github.com/AkariNext/nicefox)
++ * Original code licensed under MPL 2.0.
++ */
++
++const PREF_DATA = "arjuna.sidebarSecondary.data";
++const PREF_CONFIG = "arjuna.sidebarSecondary.config";
++const PREF_ENABLED = "arjuna.sidebarSecondary.enabled";
++
++const STATIC_PANELS = {
++  "arjuna//bookmarks": {
++    url: "chrome://browser/content/places/bookmarksSidebar.xhtml",
++    icon: "chrome://browser/skin/bookmark.svg",
++    label: "Bookmarks",
++    defaultWidth: 415,
++  },
++  "arjuna//history": {
++    url: "chrome://browser/content/places/historySidebar.xhtml",
++    icon: "chrome://browser/skin/history.svg",
++    label: "History",
++    defaultWidth: 415,
++  },
++  "arjuna//downloads": {
++    url: "about:downloads",
++    icon: "chrome://browser/skin/downloads/downloads.svg",
++    label: "Downloads",
++    defaultWidth: 415,
++  },
++  "arjuna//synced-tabs": {
++    url: "chrome://browser/content/sidebar/sidebar-syncedtabs.html",
++    icon: "chrome://browser/skin/device-phone.svg",
++    label: "Synced Tabs",
++    defaultWidth: 415,
++  },
++  "arjuna//extensions": {
++    url: "about:addons",
++    icon: "chrome://mozapps/skin/extensions/extension.svg",
++    label: "Extensions",
++    defaultWidth: 500,
++  },
++  "arjuna//chatbot": {
++    url: "chrome://browser/content/genai/chat.html",
++    icon: "chrome://global/skin/icons/highlights.svg",
++    label: "AI Chatbot",
++    defaultWidth: 450,
++  },
++};
++
++const DEFAULT_CONFIG = {
++  globalWidth: 400,
++  autoUnload: false,
++  displayed: true,
++};
++
++const DEFAULT_PANELS = [
++  { id: "default-chatbot", url: "arjuna//chatbot", type: "static", width: 0 },
++  { id: "default-synced-tabs", url: "arjuna//synced-tabs", type: "static", width: 0 },
++  { id: "default-extensions", url: "arjuna//extensions", type: "static", width: 0 },
++  { id: "default-downloads", url: "arjuna//downloads", type: "static", width: 0 },
++  { id: "default-bookmarks", url: "arjuna//bookmarks", type: "static", width: 0 },
++  { id: "default-history", url: "arjuna//history", type: "static", width: 0 },
++];
++
++export class SidebarSecondaryData {
++  #panels = [];
++  #config = {};
++  #selectedPanelId = null;
++  #enabled = true;
++  #observers = new Set();
++
++  constructor() {
++    this.#loadPanels();
++    this.#loadConfig();
++    this.#enabled = Services.prefs.getBoolPref(PREF_ENABLED, true);
++
++    Services.prefs.addObserver(PREF_DATA, this);
++    Services.prefs.addObserver(PREF_CONFIG, this);
++    Services.prefs.addObserver(PREF_ENABLED, this);
++  }
++
++  destroy() {
++    Services.prefs.removeObserver(PREF_DATA, this);
++    Services.prefs.removeObserver(PREF_CONFIG, this);
++    Services.prefs.removeObserver(PREF_ENABLED, this);
++  }
++
++  observe(_subject, _topic, data) {
++    if (data === PREF_DATA) {
++      this.#loadPanels();
++    } else if (data === PREF_CONFIG) {
++      this.#loadConfig();
++    } else if (data === PREF_ENABLED) {
++      this.#enabled = Services.prefs.getBoolPref(PREF_ENABLED, true);
++    }
++    this.#notifyObservers();
++  }
++
++  addObserver(callback) {
++    this.#observers.add(callback);
++  }
++
++  removeObserver(callback) {
++    this.#observers.delete(callback);
++  }
++
++  #notifyObservers() {
++    for (const cb of this.#observers) {
++      try { cb(); } catch (e) { console.error("SidebarSecondaryData observer error:", e); }
++    }
++  }
++
++  #loadPanels() {
++    try {
++      const raw = Services.prefs.getStringPref(PREF_DATA, "");
++      if (raw) {
++        const parsed = JSON.parse(raw);
++        this.#panels = parsed.data || [];
++      } else {
++        this.#panels = DEFAULT_PANELS;
++        this.#savePanels();
++      }
++    } catch {
++      this.#panels = DEFAULT_PANELS;
++      this.#savePanels();
++    }
++  }
++
++  #savePanels() {
++    Services.prefs.setStringPref(PREF_DATA, JSON.stringify({ data: this.#panels }));
++  }
++
++  #loadConfig() {
++    try {
++      const raw = Services.prefs.getStringPref(PREF_CONFIG, "");
++      if (raw) {
++        this.#config = JSON.parse(raw);
++      } else {
++        this.#config = { ...DEFAULT_CONFIG };
++        this.#saveConfig();
++      }
++    } catch {
++      this.#config = { ...DEFAULT_CONFIG };
++      this.#saveConfig();
++    }
++  }
++
++  #saveConfig() {
++    Services.prefs.setStringPref(PREF_CONFIG, JSON.stringify(this.#config));
++  }
++
++  get panels() { return this.#panels; }
++  get config() { return this.#config; }
++  get selectedPanelId() { return this.#selectedPanelId; }
++  get enabled() { return this.#enabled; }
++
++  set selectedPanelId(id) {
++    this.#selectedPanelId = id;
++    this.#notifyObservers();
++  }
++
++  set enabled(val) {
++    this.#enabled = val;
++    Services.prefs.setBoolPref(PREF_ENABLED, val);
++  }
++
++  getPanel(id) {
++    return this.#panels.find(p => p.id === id);
++  }
++
++  addPanel(panel) {
++    this.#panels.push(panel);
++    this.#savePanels();
++    this.#notifyObservers();
++  }
++
++  removePanel(id) {
++    this.#panels = this.#panels.filter(p => p.id !== id);
++    this.#savePanels();
++    this.#notifyObservers();
++  }
++
++  updatePanel(id, updates) {
++    this.#panels = this.#panels.map(p => p.id === id ? { ...p, ...updates } : p);
++    this.#savePanels();
++    this.#notifyObservers();
++  }
++
++  reorderPanels(fromIndex, toIndex) {
++    const item = this.#panels.splice(fromIndex, 1)[0];
++    this.#panels.splice(toIndex, 0, item);
++    this.#savePanels();
++    this.#notifyObservers();
++  }
++
++  updateConfig(updates) {
++    this.#config = { ...this.#config, ...updates };
++    this.#saveConfig();
++    this.#notifyObservers();
++  }
++
++  getStaticPanel(url) {
++    return STATIC_PANELS[url] || null;
++  }
++
++  getPanelWidth(panel) {
++    return panel.width || this.#config.globalWidth || DEFAULT_CONFIG.globalWidth;
++  }
++}
+diff --git a/browser/components/sidebar/sidebar-secondary.css b/browser/components/sidebar/sidebar-secondary.css
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/browser/components/sidebar/sidebar-secondary.css
+@@ -0,0 +1,412 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Based on Floorp Browser panel-sidebar (https://github.com/AkariNext/nicefox)
++ * Original code licensed under MPL 2.0.
++ */
++
++:root {
++  --sidebar-secondary-selectbox-width: 42px;
++  --sidebar-secondary-icon-size: 16px;
++  --sidebar-secondary-button-size: 36px;
++  --sidebar-secondary-header-height: 38px;
++  --sidebar-secondary-splitter-width: 4px;
++}
++
++:root[uidensity="compact"] {
++  --sidebar-secondary-selectbox-width: 35px;
++  --sidebar-secondary-button-size: 30px;
++}
++
++:root[uidensity="touch"] {
++  --sidebar-secondary-selectbox-width: 60px;
++  --sidebar-secondary-button-size: 55px;
++  --sidebar-secondary-icon-size: 20px;
++}
++
++/* Select Box (vertical icon strip) */
++#sidebar-secondary-select-box {
++  display: flex;
++  flex-direction: column;
++  align-items: center;
++  justify-content: flex-start;
++  width: var(--sidebar-secondary-selectbox-width);
++  min-width: var(--sidebar-secondary-selectbox-width);
++  max-width: var(--sidebar-secondary-selectbox-width);
++  color: var(--toolbar-color);
++  background-color: var(--sidebar-background-color);
++  border-inline-start: 1px solid var(--chrome-content-separator-color);
++  overflow-y: auto;
++  scrollbar-width: thin;
++  min-height: 100%;
++}
++
++/* Panel buttons */
++.sidebar-secondary-button {
++  appearance: none;
++  -moz-context-properties: fill, fill-opacity;
++  border-radius: 4px;
++  color: inherit;
++  fill: currentColor;
++  min-width: var(--sidebar-secondary-button-size);
++  min-height: var(--sidebar-secondary-button-size);
++  margin: 4px 2px;
++  padding: 0;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  cursor: pointer;
++  border: none;
++  background: transparent;
++}
++
++.sidebar-secondary-button > .toolbarbutton-icon {
++  width: var(--sidebar-secondary-icon-size);
++  height: var(--sidebar-secondary-icon-size);
++}
++
++.sidebar-secondary-button > .toolbarbutton-text {
++  display: none;
++}
++
++.sidebar-secondary-button.dragging {
++  opacity: 0.3;
++}
++
++.sidebar-secondary-button.drag-over-above {
++  box-shadow: 0 -2px 0 0 highlight;
++}
++
++.sidebar-secondary-button.drag-over-below {
++  box-shadow: 0 2px 0 0 highlight;
++}
++
++/* Floating drag clone */
++.sidebar-secondary-drag-clone {
++  position: fixed;
++  pointer-events: none;
++  z-index: 10000;
++  opacity: 0.85;
++  transform: scale(1.1);
++  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
++  border-radius: 4px;
++  background-color: var(--sidebar-background-color);
++}
++
++@media not (prefers-contrast) {
++  .sidebar-secondary-button:hover {
++    box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
++    background-color: var(--tab-selected-bgcolor, var(--toolbar-bgcolor));
++  }
++
++  .sidebar-secondary-button[data-checked="true"],
++  .sidebar-secondary-button:active {
++    background-color: color-mix(in srgb, currentColor 20%, transparent);
++    box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
++  }
++}
++
++@media (prefers-contrast) {
++  .sidebar-secondary-button:hover {
++    outline: 1px solid currentColor;
++  }
++}
++
++/* Sidebar content box — overlays page from the right */
++#sidebar-secondary-box {
++  background: var(--sidebar-background-color);
++  min-width: 225px;
++  display: none;
++  position: absolute !important;
++  right: 0;
++  top: 0;
++  bottom: 0;
++  z-index: 9;
++}
++
++#sidebar-secondary-box[data-visible="true"] {
++  display: flex;
++  flex-direction: column;
++}
++
++/* Resize handle on left edge of right sidebar panel */
++#sidebar-secondary-resize {
++  position: absolute;
++  left: -3px;
++  top: 0;
++  bottom: 0;
++  width: 6px;
++  cursor: ew-resize;
++  z-index: 10;
++}
++
++#sidebar-secondary-resize:hover {
++  background: color-mix(in srgb, currentColor 15%, transparent);
++}
++
++/* Splitter */
++#sidebar-secondary-splitter {
++  margin-inline: 0;
++  border-color: transparent;
++  display: none;
++}
++
++#sidebar-secondary-box[data-visible="true"] ~ #sidebar-secondary-splitter,
++#sidebar-secondary-splitter:has(~ #sidebar-secondary-box[data-visible="true"]) {
++  display: flex;
++}
++
++/* Header */
++#sidebar-secondary-header {
++  height: var(--sidebar-secondary-header-height);
++  background-color: var(--sidebar-background-color);
++  padding: 0 6px;
++  display: flex;
++  align-items: center;
++}
++
++/* Header action buttons */
++.sidebar-secondary-action {
++  appearance: none;
++  -moz-context-properties: fill, fill-opacity;
++  border-radius: 4px;
++  color: inherit;
++  fill: currentColor;
++  padding: 6px;
++  width: 28px;
++  height: 28px;
++  border: none;
++  background: transparent;
++  cursor: pointer;
++}
++
++.sidebar-secondary-action:hover {
++  background-color: color-mix(in srgb, currentColor 10%, transparent);
++}
++
++.sidebar-secondary-action:active {
++  background-color: color-mix(in srgb, currentColor 20%, transparent);
++}
++
++/* Browser content area */
++#sidebar-secondary-browser-box {
++  flex: 1;
++  display: flex;
++  flex-direction: column;
++  min-height: 0;
++}
++
++.sidebar-secondary-browser {
++  display: none;
++}
++
++.sidebar-secondary-browser[flex="1"] {
++  display: flex;
++}
++
++/* Action icons */
++#sidebar-secondary-back { list-style-image: url("chrome://browser/skin/back.svg"); }
++#sidebar-secondary-forward { list-style-image: url("chrome://browser/skin/forward.svg"); }
++#sidebar-secondary-reload { list-style-image: url("chrome://global/skin/icons/reload.svg"); }
++#sidebar-secondary-home { list-style-image: url("chrome://browser/skin/home.svg"); }
++#sidebar-secondary-close { list-style-image: url("chrome://global/skin/icons/close.svg"); }
++#sidebar-secondary-add { list-style-image: url("chrome://global/skin/icons/plus.svg"); }
++
++/* Add button at bottom of select box */
++#sidebar-secondary-panels {
++  flex: 1;
++}
++
++#sidebar-secondary-actions {
++  margin-bottom: 4px;
++}
++
++/* ============================================================
++   Auto-hide: bars overlay content, NEVER push it.
++   Hidden state: visibility:collapse (removed from XUL layout)
++   Visible state: visibility:visible + position:fixed (overlay)
++   JS toggles [data-autohide-visible] attribute.
++   ============================================================ */
++
++/* Hide splitters */
++#sidebar-launcher-splitter,
++#sidebar-secondary-splitter {
++  visibility: collapse !important;
++}
++
++/* Side View splitter — visible when sidebar is open */
++#sidebar-splitter {
++  visibility: collapse !important;
++}
++#sidebar-box:not([hidden]) + #sidebar-splitter {
++  visibility: visible !important;
++}
++
++
++/* Left sidebar separator line */
++#sidebar-main {
++  border-inline-end: 1px solid var(--chrome-content-separator-color);
++}
++
++/* --- Hidden state: off-screen with transitions --- */
++#sidebar-main {
++  position: fixed !important;
++  top: 0;
++  left: 0;
++  bottom: 0;
++  z-index: 100;
++  width: 240px;
++  background-color: var(--sidebar-background-color);
++  transform: translateX(-100%);
++  transition: transform 0.2s ease;
++  pointer-events: none;
++}
++
++#sidebar-secondary-select-box {
++  position: fixed !important;
++  top: 0;
++  right: 0;
++  bottom: 0;
++  z-index: 100;
++  background-color: var(--sidebar-background-color);
++  transform: translateX(100%);
++  transition: transform 0.2s ease;
++  pointer-events: none;
++}
++
++:root[toolbar-autohide] #navigator-toolbox {
++  position: fixed !important;
++  top: 0;
++  left: 0;
++  right: 0;
++  z-index: 101;
++  transform: translateY(-100%);
++  transition: transform 0.2s ease;
++  pointer-events: none;
++  visibility: hidden;
++}
++
++/* --- Visible state: slide in --- */
++#sidebar-main[data-autohide-visible] {
++  transform: translateX(0);
++  pointer-events: auto;
++}
++
++#sidebar-secondary-select-box[data-autohide-visible] {
++  transform: translateX(0);
++  pointer-events: auto;
++}
++
++:root[toolbar-autohide] #navigator-toolbox[data-autohide-visible] {
++  transform: translateY(0);
++  pointer-events: auto;
++  visibility: visible;
++  transition: transform 0.2s ease;
++  background-color: var(--sidebar-background-color) !important;
++}
++
++/* Sidebar panel content also overlays */
++#sidebar-secondary-box[data-visible="true"] {
++  position: fixed !important;
++  top: 0;
++  right: 0;
++  bottom: 0;
++  z-index: 99;
++}
++
++/* Center tab-prompt dialogs vertically (container add/edit) */
++.tab-prompt-dialog > .dialogOverlay {
++  display: grid !important;
++  align-items: unset !important;
++  place-content: center !important;
++  grid-auto-rows: min(90%, var(--doc-height-px));
++}
++
++/* Trigger strips at window edges */
++.sidebar-autohide-trigger {
++  position: fixed;
++  z-index: 102;
++}
++
++.sidebar-autohide-trigger-top {
++  top: 0; left: 0; right: 0; height: 12px;
++}
++
++.sidebar-autohide-trigger-left {
++  top: 0; left: 0; bottom: 0; width: 12px;
++}
++
++.sidebar-autohide-trigger-right {
++  top: 0; right: 0; bottom: 0; width: 12px;
++}
++
++/* Hide sidebar pins promo popup */
++sidebar-pins-promo {
++  display: none !important;
++}
++
++/* Hide sidebar toggle button */
++#sidebar-button {
++  display: none !important;
++}
++
++/* Hide unified extensions button and its container from toolbar */
++#unified-extensions-button,
++#unified-extensions-area,
++#unified-extensions-button-wrapper {
++  display: none !important;
++}
++
++/* Hide elements between customization target and overflow button */
++#document-pip-return-to-opener-button,
++#taskbar-tabs-audio,
++#smartwindow-ask-button {
++  display: none !important;
++}
++
++
++
++/* Remove all spacing between toolbar sections */
++#nav-bar-customization-target {
++  padding-inline-end: 0 !important;
++  margin-inline-end: 0 !important;
++}
++
++#fxa-toolbar-menu-button {
++  margin-inline-end: 0 !important;
++  padding-inline-end: 0 !important;
++}
++
++#nav-bar > toolbartabstop {
++  display: none !important;
++}
++
++
++/* Left sidebar tool buttons hidden via JS (shadow DOM) */
++
++/* Bookmarks toolbar: two rows */
++#PersonalToolbar {
++  max-height: none !important;
++}
++
++#PlacesToolbarItems {
++  display: flex !important;
++  flex-wrap: wrap !important;
++}
++
++/* Fullscreen / chromehidden */
++:is(
++    :root[inDOMFullscreen],
++    :root[inFullscreen]:not([macOSNativeFullscreen]),
++    *|*:root[chromehidden~="toolbar"]
++  )
++  #sidebar-secondary-select-box,
++:is(
++    :root[inDOMFullscreen],
++    :root[inFullscreen]:not([macOSNativeFullscreen]),
++    *|*:root[chromehidden~="toolbar"]
++  )
++  #sidebar-secondary-box {
++  display: none !important;
++}
+diff --git a/browser/components/sidebar/sidebar-secondary.js b/browser/components/sidebar/sidebar-secondary.js
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/browser/components/sidebar/sidebar-secondary.js
+@@ -0,0 +1,605 @@
++/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Based on Floorp Browser panel-sidebar (https://github.com/AkariNext/nicefox)
++ * Original code licensed under MPL 2.0.
++ */
++
++/* global ChromeUtils */
++
++var { SidebarSecondaryData } = ChromeUtils.importESModule(
++  "moz-src:///browser/components/sidebar/SidebarSecondaryData.sys.mjs"
++);
++var { SidebarSecondary } = ChromeUtils.importESModule(
++  "moz-src:///browser/components/sidebar/SidebarSecondary.sys.mjs"
++);
++
++var gSidebarSecondary = {
++  _data: null,
++  _controller: null,
++  _initialized: false,
++
++  AUTOHIDE_TOOLBAR_PREF: "arjuna.toolbar.autohide",
++
++  init() {
++    if (this._initialized) return;
++    this._initialized = true;
++
++    this._data = new SidebarSecondaryData();
++    this._controller = new SidebarSecondary(this._data, document);
++
++    this._buildUI();
++    this._data.addObserver(() => this._onDataChanged());
++    // Delay until after browser finishes initializing
++    setTimeout(() => {
++      this._fixOverflowMenu();
++      this._initAutoHideToolbar();
++      this._initAutoHideSidebars();
++      this._initContextMenuLock();
++      gBrowser._allowTabChange = true;
++    }, 1000);
++  },
++
++  _fixOverflowMenu() {
++    try {
++      const { CustomizableUI } = ChromeUtils.importESModule("moz-src:///browser/components/customizableui/CustomizableUI.sys.mjs");
++      const OVERFLOW = "widget-overflow-fixed-list";
++      const desired = ["developer-button", "email-link-button", "firefox-view-button", "panic-button", "library-button", "screenshot-button"];
++
++      // Remove ALL items from overflow
++      for (const id of [...CustomizableUI.getWidgetIdsInArea(OVERFLOW)]) {
++        CustomizableUI.removeWidgetFromArea(id);
++      }
++      // Add desired items in exact order
++      for (let i = 0; i < desired.length; i++) {
++        CustomizableUI.addWidgetToArea(desired[i], OVERFLOW, i);
++      }
++    } catch (e) {}
++  },
++
++  _initAutoHideToolbar() {
++    const enabled = Services.prefs.getBoolPref(this.AUTOHIDE_TOOLBAR_PREF, true);
++    this._applyAutoHideToolbar(enabled);
++
++    const checkbox = document.getElementById("toolbar-context-autohide-toolbar");
++    if (checkbox) {
++      // Set initial state
++      if (enabled) checkbox.setAttribute("checked", "true");
++      else checkbox.removeAttribute("checked");
++      // Listen for clicks (only register once)
++      if (!checkbox._arjunaHandlerSet) {
++        checkbox._arjunaHandlerSet = true;
++        checkbox.addEventListener("command", () => this.toggleAutoHideToolbar());
++      }
++    }
++
++    // Only show checkbox when right-clicking toolbar area
++    const toolbarMenu = document.getElementById("toolbar-context-menu");
++    if (toolbarMenu) {
++      toolbarMenu.addEventListener("popupshowing", (e) => {
++        if (!checkbox) return;
++        const node = e.target.triggerNode;
++        checkbox.hidden = !node?.closest("#navigator-toolbox");
++      });
++    }
++  },
++
++  toggleAutoHideToolbar() {
++    try {
++      const newState = !Services.prefs.getBoolPref(this.AUTOHIDE_TOOLBAR_PREF, true);
++      Services.prefs.setBoolPref(this.AUTOHIDE_TOOLBAR_PREF, newState);
++      this._applyAutoHideToolbar(newState);
++    } catch(e) {}
++  },
++
++  _applyAutoHideToolbar(enabled) {
++    if (enabled) {
++      document.documentElement.setAttribute("toolbar-autohide", "true");
++    } else {
++      document.documentElement.removeAttribute("toolbar-autohide");
++      // Clean up all auto-hide visible states
++      for (const id of ["navigator-toolbox", "sidebar-main", "sidebar-secondary-select-box"]) {
++        const el = document.getElementById(id);
++        if (el) el.removeAttribute("data-autohide-visible");
++      }
++    }
++  },
++
++  _initAutoHideSidebars() {
++    const sidebarMain = document.getElementById("sidebar-main");
++    const selectBox = document.getElementById("sidebar-secondary-select-box");
++    const toolbox = document.getElementById("navigator-toolbox");
++
++    // Create trigger strips at window edges
++    const createTrigger = (cls) => {
++      const el = document.createElement("div");
++      el.classList.add("sidebar-autohide-trigger", cls);
++      document.documentElement.appendChild(el);
++      return el;
++    };
++
++    const leftTrigger = createTrigger("sidebar-autohide-trigger-left");
++    const rightTrigger = createTrigger("sidebar-autohide-trigger-right");
++    const topTrigger = createTrigger("sidebar-autohide-trigger-top");
++
++    // Show/hide via data attribute — CSS handles position:fixed overlay
++    const showEl = (el) => { if (el) el.setAttribute("data-autohide-visible", "true"); };
++    const hideEl = (el) => { if (el) el.removeAttribute("data-autohide-visible"); };
++
++    const setupHover = (trigger, element, showFn, hideFn) => {
++      let timer = null;
++      const show = () => { clearTimeout(timer); showFn(); };
++      const hide = () => {
++        timer = setTimeout(() => {
++          if (this._openPopupCount > 0) return;
++          if (element && document.activeElement?.closest(`#${element.id}`)) return;
++          hideFn();
++        }, 200);
++      };
++
++      trigger.addEventListener("mouseenter", show);
++      if (element) {
++        element.addEventListener("mouseenter", show);
++        element.addEventListener("mouseleave", hide);
++      }
++      trigger.addEventListener("mouseleave", hide);
++
++      return { show, hide };
++    };
++
++    const leftShow = () => {
++      showEl(sidebarMain);
++      document.documentElement.setAttribute("sidebar-left-visible", "true");
++    };
++    const leftHide = () => {
++      hideEl(sidebarMain);
++      document.documentElement.removeAttribute("sidebar-left-visible");
++    };
++    this._leftHover = setupHover(leftTrigger, sidebarMain, leftShow, leftHide);
++    this._rightHover = setupHover(rightTrigger, selectBox,
++      () => showEl(selectBox), () => hideEl(selectBox));
++    this._toolbarHover = setupHover(topTrigger, toolbox,
++      () => showEl(toolbox), () => hideEl(toolbox));
++  },
++
++  _buildUI() {
++    const browserEl = document.getElementById("browser");
++    if (!browserEl) return;
++
++    // Order inside #browser (appended at the end, right side):
++    // ... existing elements ... | splitter | sidebar-box | select-box
++
++    // Splitter
++    const splitter = document.createXULElement("splitter");
++    splitter.id = "sidebar-secondary-splitter";
++    splitter.classList.add("chromeclass-extrachrome", "sidebar-splitter");
++    splitter.setAttribute("resizebefore", "none");
++    splitter.setAttribute("resizeafter", "next");
++    browserEl.appendChild(splitter);
++
++    // Sidebar content box
++    const sidebarBox = document.createXULElement("vbox");
++    sidebarBox.id = "sidebar-secondary-box";
++    sidebarBox.classList.add("chromeclass-extrachrome");
++    browserEl.appendChild(sidebarBox);
++
++    // Resize handle on left edge
++    const resizeHandle = document.createElement("div");
++    resizeHandle.id = "sidebar-secondary-resize";
++    sidebarBox.appendChild(resizeHandle);
++    this._initResize(resizeHandle, sidebarBox);
++
++    // Header
++    const header = document.createXULElement("hbox");
++    header.id = "sidebar-secondary-header";
++    header.setAttribute("align", "center");
++    sidebarBox.appendChild(header);
++
++    this._buildHeaderButtons(header);
++
++    // Browser content area
++    const browserBox = document.createXULElement("vbox");
++    browserBox.id = "sidebar-secondary-browser-box";
++    browserBox.setAttribute("flex", "1");
++    sidebarBox.appendChild(browserBox);
++
++    // Select box (icon strip) — rightmost element
++    const selectBox = document.createXULElement("vbox");
++    selectBox.id = "sidebar-secondary-select-box";
++    browserEl.appendChild(selectBox);
++
++    // Panels container inside select box
++    const panelsContainer = document.createXULElement("vbox");
++    panelsContainer.id = "sidebar-secondary-panels";
++    selectBox.appendChild(panelsContainer);
++
++    // Actions container (add button)
++    const actionsContainer = document.createXULElement("vbox");
++    actionsContainer.id = "sidebar-secondary-actions";
++    actionsContainer.setAttribute("align", "center");
++    selectBox.appendChild(actionsContainer);
++
++    const addBtn = document.createXULElement("toolbarbutton");
++    addBtn.id = "sidebar-secondary-add";
++    addBtn.classList.add("sidebar-secondary-button");
++    addBtn.setAttribute("tooltiptext", "Add panel");
++    addBtn.addEventListener("command", () => this._onAddPanel());
++    actionsContainer.appendChild(addBtn);
++
++    this._renderPanelButtons();
++  },
++
++  _buildHeaderButtons(header) {
++    const buttons = [
++      { id: "sidebar-secondary-back", tooltip: "Back", action: () => this._navigate("back") },
++      { id: "sidebar-secondary-forward", tooltip: "Forward", action: () => this._navigate("forward") },
++      { id: "sidebar-secondary-reload", tooltip: "Reload", action: () => this._navigate("reload") },
++      { id: "sidebar-secondary-home", tooltip: "Home", action: () => this._navigate("home") },
++    ];
++
++    for (const { id, tooltip, action } of buttons) {
++      const btn = document.createXULElement("toolbarbutton");
++      btn.id = id;
++      btn.classList.add("sidebar-secondary-action");
++      btn.setAttribute("tooltiptext", tooltip);
++      btn.addEventListener("command", action);
++      header.appendChild(btn);
++    }
++
++    // Spacer
++    const spacer = document.createXULElement("spacer");
++    spacer.setAttribute("flex", "1");
++    header.appendChild(spacer);
++
++    // Close button
++    const closeBtn = document.createXULElement("toolbarbutton");
++    closeBtn.id = "sidebar-secondary-close";
++    closeBtn.classList.add("sidebar-secondary-action", "close-icon");
++    closeBtn.setAttribute("tooltiptext", "Close panel");
++    closeBtn.addEventListener("command", () => {
++      if (this._data.selectedPanelId) {
++        this._controller.changePanel(this._data.selectedPanelId);
++      }
++    });
++    header.appendChild(closeBtn);
++  },
++
++  _initResize(handle, box) {
++    let startX, startWidth, overlay;
++    const onMouseMove = (e) => {
++      const newWidth = startWidth + (startX - e.clientX);
++      if (newWidth >= 225 && newWidth <= window.innerWidth * 0.8) {
++        box.style.width = `${newWidth}px`;
++      }
++    };
++    const onMouseUp = () => {
++      window.removeEventListener("mousemove", onMouseMove);
++      window.removeEventListener("mouseup", onMouseUp);
++      if (overlay) { overlay.remove(); overlay = null; }
++      this._controller.saveCurrentWidth();
++    };
++    handle.addEventListener("mousedown", (e) => {
++      if (e.button !== 0) return;
++      e.preventDefault();
++      startX = e.clientX;
++      startWidth = box.getBoundingClientRect().width;
++      // Transparent overlay prevents browser elements from stealing mouse events
++      overlay = document.createElement("div");
++      overlay.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;cursor:ew-resize;";
++      document.documentElement.appendChild(overlay);
++      window.addEventListener("mousemove", onMouseMove);
++      window.addEventListener("mouseup", onMouseUp);
++    });
++  },
++
++  _renderPanelButtons() {
++    const container = document.getElementById("sidebar-secondary-panels");
++    if (!container) return;
++
++    // Clear existing buttons
++    while (container.firstChild) {
++      container.firstChild.remove();
++    }
++
++    for (const panel of this._data.panels) {
++      const btn = document.createXULElement("toolbarbutton");
++      btn.classList.add("sidebar-secondary-button");
++      btn.setAttribute("data-panel-id", panel.id);
++      btn.setAttribute("tooltiptext", this._getPanelLabel(panel));
++
++      if (panel.id === this._data.selectedPanelId) {
++        btn.setAttribute("data-checked", "true");
++      }
++
++      // Icon
++      const icon = this._getPanelIcon(panel);
++      if (icon) {
++        btn.setAttribute("image", icon);
++      }
++
++      // Click + drag handled together via mousedown
++      btn.addEventListener("mousedown", e => {
++        if (e.button === 2) {
++          e.preventDefault();
++          this._onContextMenu(e, panel);
++          return;
++        }
++        this._onMouseDown(e, panel, btn);
++      });
++
++      container.appendChild(btn);
++    }
++  },
++
++  _onDataChanged() {
++    this._renderPanelButtons();
++    this._updateVisibility();
++  },
++
++  _updateVisibility() {
++    const sidebarBox = document.getElementById("sidebar-secondary-box");
++    if (!sidebarBox) return;
++
++    if (this._data.selectedPanelId) {
++      sidebarBox.setAttribute("data-visible", "true");
++    } else {
++      sidebarBox.removeAttribute("data-visible");
++    }
++  },
++
++  _getPanelLabel(panel) {
++    if (panel.type === "static") {
++      const staticPanel = this._data.getStaticPanel(panel.url);
++      return staticPanel ? staticPanel.label : panel.url;
++    }
++    return panel.url || panel.id;
++  },
++
++  _getPanelIcon(panel) {
++    if (panel.icon) return panel.icon;
++    if (panel.type === "static") {
++      const staticPanel = this._data.getStaticPanel(panel.url);
++      return staticPanel ? staticPanel.icon : null;
++    }
++    // Use site favicon for web panels
++    if (panel.type === "web" && panel.url) {
++      try {
++        const url = new URL(panel.url);
++        return url.origin + "/favicon.ico";
++      } catch (e) {}
++    }
++    return "chrome://global/skin/icons/defaultFavicon.svg";
++  },
++
++  _navigate(action) {
++    const panelId = this._data.selectedPanelId;
++    if (!panelId) return;
++    const browser = this._controller.getBrowser(panelId);
++    if (!browser) return;
++
++    switch (action) {
++      case "back":
++        if (browser.canGoBack) browser.goBack();
++        break;
++      case "forward":
++        if (browser.canGoForward) browser.goForward();
++        break;
++      case "reload":
++        browser.reload();
++        break;
++      case "home": {
++        const panel = this._data.getPanel(panelId);
++        if (panel) {
++          let url = panel.url;
++          if (panel.type === "static") {
++            const sp = this._data.getStaticPanel(panel.url);
++            if (sp) url = sp.url;
++          }
++          browser.loadURI(Services.io.newURI(url), {
++            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
++          });
++        }
++        break;
++      }
++    }
++  },
++
++  _openPopupCount: 0,
++
++  _initContextMenuLock() {
++    document.addEventListener("popupshowing", (e) => {
++      if (e.target.localName === "menupopup" || e.target.localName === "panel") {
++        this._openPopupCount++;
++      }
++    });
++    document.addEventListener("popuphidden", (e) => {
++      if (e.target.localName === "menupopup" || e.target.localName === "panel") {
++        this._openPopupCount = Math.max(0, this._openPopupCount - 1);
++        if (this._openPopupCount === 0) {
++          setTimeout(() => {
++            if (this._openPopupCount === 0) {
++              // Trigger hide on all bars
++              if (this._leftHover) this._leftHover.hide();
++              if (this._rightHover) this._rightHover.hide();
++              if (this._toolbarHover) this._toolbarHover.hide();
++            }
++          }, 100);
++        }
++      }
++    });
++  },
++
++  // Mouse-based drag reordering
++  _justDragged: false,
++
++  _onMouseDown(e, panel, btn) {
++    if (e.button !== 0) return;
++
++    const startY = e.clientY;
++    const container = document.getElementById("sidebar-secondary-panels");
++    let dragging = false;
++    let clone = null;
++    const btnRect = btn.getBoundingClientRect();
++    const offsetY = e.clientY - btnRect.top;
++    const offsetX = e.clientX - btnRect.left;
++    const btnHeight = btnRect.height + 8; // height + margin
++    const fromIdx = this._data.panels.findIndex(p => p.id === panel.id);
++    let currentShiftIdx = fromIdx;
++
++    const buttons = () => [...container.querySelectorAll(".sidebar-secondary-button")];
++
++    const resetTransforms = () => {
++      for (const b of buttons()) {
++        b.style.transition = "";
++        b.style.transform = "";
++      }
++    };
++
++    const applyShifts = (targetIdx) => {
++      if (targetIdx === currentShiftIdx && dragging) return;
++      currentShiftIdx = targetIdx;
++      for (const b of buttons()) {
++        const bIdx = this._data.panels.findIndex(
++          p => p.id === b.getAttribute("data-panel-id")
++        );
++        if (bIdx === fromIdx) continue;
++        b.style.transition = "transform 0.15s ease";
++        if (fromIdx < targetIdx && bIdx > fromIdx && bIdx <= targetIdx) {
++          b.style.transform = `translateY(-${btnHeight}px)`;
++        } else if (fromIdx > targetIdx && bIdx >= targetIdx && bIdx < fromIdx) {
++          b.style.transform = `translateY(${btnHeight}px)`;
++        } else {
++          b.style.transform = "";
++        }
++      }
++    };
++
++    const onMouseMove = (moveEvent) => {
++      if (!dragging && Math.abs(moveEvent.clientY - startY) > 8) {
++        dragging = true;
++        btn.classList.add("dragging");
++        clone = btn.cloneNode(true);
++        clone.classList.add("sidebar-secondary-drag-clone");
++        clone.classList.remove("dragging");
++        clone.style.width = `${btnRect.width}px`;
++        clone.style.height = `${btnRect.height}px`;
++        document.documentElement.appendChild(clone);
++      }
++      if (!dragging) return;
++
++      clone.style.left = `${moveEvent.clientX - offsetX}px`;
++      clone.style.top = `${moveEvent.clientY - offsetY}px`;
++
++      // Find which position the cursor is over
++      for (const otherBtn of buttons()) {
++        if (otherBtn === btn) continue;
++        const rect = otherBtn.getBoundingClientRect();
++        const midY = rect.top + rect.height / 2;
++        if (moveEvent.clientY >= rect.top && moveEvent.clientY <= rect.bottom) {
++          const targetId = otherBtn.getAttribute("data-panel-id");
++          let toIdx = this._data.panels.findIndex(p => p.id === targetId);
++          if (moveEvent.clientY > midY) toIdx = Math.min(toIdx + 1, this._data.panels.length - 1);
++          if (moveEvent.clientY < midY) toIdx = Math.max(toIdx, 0);
++          applyShifts(toIdx);
++          break;
++        }
++      }
++    };
++
++    const onMouseUp = () => {
++      window.removeEventListener("mousemove", onMouseMove);
++      window.removeEventListener("mouseup", onMouseUp);
++
++      if (!dragging) {
++        this._controller.changePanel(panel.id);
++        return;
++      }
++
++      btn.classList.remove("dragging");
++      if (clone) clone.remove();
++      resetTransforms();
++
++      if (fromIdx >= 0 && currentShiftIdx >= 0 && fromIdx !== currentShiftIdx) {
++        this._data.reorderPanels(fromIdx, currentShiftIdx);
++      }
++    };
++
++    window.addEventListener("mousemove", onMouseMove);
++    window.addEventListener("mouseup", onMouseUp);
++  },
++
++  // Context menu
++  _onContextMenu(e, panel) {
++    e.preventDefault();
++
++    // Remove existing context menu
++    document.getElementById("sidebar-secondary-context")?.remove();
++
++    const popup = document.createXULElement("menupopup");
++    popup.id = "sidebar-secondary-context";
++
++    const items = [
++      { label: "Open in tab", action: () => this._controller.openInMainWindow(panel.id) },
++      { label: "Unload", action: () => this._controller.unloadPanel(panel.id) },
++      null, // separator
++      { label: "Settings", action: () => this._editPanel(panel) },
++      { label: "Remove", action: () => this._controller.deletePanel(panel.id) },
++    ];
++
++    for (const item of items) {
++      if (item === null) {
++        popup.appendChild(document.createXULElement("menuseparator"));
++      } else {
++        const mi = document.createXULElement("menuitem");
++        mi.setAttribute("label", item.label);
++        mi.addEventListener("command", item.action);
++        popup.appendChild(mi);
++      }
++    }
++
++    document.getElementById("mainPopupSet").appendChild(popup);
++    popup.openPopupAtScreen(e.screenX, e.screenY, true);
++  },
++
++  _editPanel(panel) {
++    const urlObj = { value: panel.url || "" };
++    const bc = gBrowser.selectedBrowser.browsingContext;
++    const result = Services.prompt.promptBC(bc, Services.prompt.MODAL_TYPE_CONTENT,
++      "Edit Panel", "URL:", urlObj, null, { value: false });
++    const ok = result?.get ? result.get("buttonNumClicked") === 0 : result;
++    const url = result?.get ? result.get("value") : urlObj.value;
++    if (ok && url) {
++      this._data.updatePanel(panel.id, { url, icon: null });
++      this._controller.unloadPanel(panel.id);
++    }
++  },
++
++  // Add panel
++  _onAddPanel() {
++    const urlObj = { value: "https://" };
++    const bc = gBrowser.selectedBrowser.browsingContext;
++    const result = Services.prompt.promptBC(bc, Services.prompt.MODAL_TYPE_CONTENT,
++      "Add Web Panel", "Enter URL:", urlObj, null, { value: false });
++    const ok = result?.get ? result.get("buttonNumClicked") === 0 : result;
++    const url = result?.get ? result.get("value") : urlObj.value;
++    if (ok && url && url !== "https://") {
++      this._data.addPanel({
++        id: `web-${Date.now()}`,
++        url: url,
++        type: "web",
++        width: 0,
++      });
++    }
++  },
++};
++
++// Init after browser chrome is ready
++if (document.readyState === "complete") {
++  gSidebarSecondary.init();
++} else {
++  window.addEventListener("load", () => {
++    gSidebarSecondary.init();
++  }, { once: true });
++}
+diff --git a/browser/components/sidebar/sidebar-workspaces.js b/browser/components/sidebar/sidebar-workspaces.js
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/browser/components/sidebar/sidebar-workspaces.js
+@@ -0,0 +1,101 @@
++/* -*- indent-tabs-mode: nil; js-indent-level: 2 -*-
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
++ *
++ * Arjuna Workspaces: intercepts new tab creation to assign
++ * the active container, and hides left sidebar bottom tools.
++ */
++
++var gWorkspaces = {
++  _initialized: false,
++
++  init() {
++    if (this._initialized) return;
++    this._initialized = true;
++
++    this._hideBottomTools();
++    this._interceptNewTabs();
++  },
++
++  _hideBottomTools() {
++    const sidebarMain = document.querySelector("sidebar-main");
++    if (!sidebarMain) return;
++
++    const tryHide = () => {
++      const shadow = sidebarMain.shadowRoot;
++      if (!shadow) return false;
++      const wrapper = shadow.querySelector(".buttons-wrapper");
++      if (wrapper) {
++        wrapper.style.display = "none";
++        return true;
++      }
++      return false;
++    };
++
++    if (!tryHide()) {
++      let attempts = 0;
++      const interval = setInterval(() => {
++        if (tryHide() || ++attempts > 20) clearInterval(interval);
++      }, 250);
++    }
++  },
++
++  _interceptNewTabs() {
++    let replacing = false;
++    gBrowser.tabContainer.addEventListener("TabOpen", (e) => {
++      const sidebarMain = document.querySelector("sidebar-main");
++      const activeWorkspace = sidebarMain?._activeWorkspace;
++      if (activeWorkspace === null || activeWorkspace === undefined) return;
++      if (replacing) return;
++
++      const tab = e.target;
++      const tabContextId = parseInt(tab.getAttribute("usercontextid") || "0", 10);
++      if (tabContextId !== 0) return;
++
++      replacing = true;
++      requestAnimationFrame(() => {
++        setTimeout(() => {
++          try {
++            const newTab = gBrowser.addTrustedTab("about:newtab", {
++              userContextId: activeWorkspace,
++            });
++            gBrowser.selectedTab = newTab;
++            gBrowser.removeTab(tab);
++            // Re-filter
++            sidebarMain._switchWorkspace(activeWorkspace);
++          } finally {
++            setTimeout(() => { replacing = false; }, 100);
++          }
++        }, 0);
++      });
++    });
++
++    gBrowser.tabContainer.addEventListener("TabClose", () => {
++      const sidebarMain = document.querySelector("sidebar-main");
++      const activeWorkspace = sidebarMain?._activeWorkspace;
++      if (activeWorkspace !== null && activeWorkspace !== undefined) {
++        setTimeout(() => sidebarMain._switchWorkspace(activeWorkspace), 100);
++      }
++    });
++
++    // Re-render workspace bar when containers change
++    const updateWorkspaces = () => {
++      const sidebarMain = document.querySelector("sidebar-main");
++      if (sidebarMain) {
++        sidebarMain.requestUpdate();
++      }
++    };
++    Services.obs.addObserver(updateWorkspaces, "contextual-identity-created");
++    Services.obs.addObserver(updateWorkspaces, "contextual-identity-deleted");
++    Services.obs.addObserver(updateWorkspaces, "contextual-identity-updated");
++  },
++};
++
++if (document.readyState === "complete") {
++  setTimeout(() => gWorkspaces.init(), 500);
++} else {
++  window.addEventListener("load", () => {
++    setTimeout(() => gWorkspaces.init(), 500);
++  }, { once: true });
++}
+diff --git a/browser/base/content/browser-main.js b/browser/base/content/browser-main.js
+index d24bcbba78..89e1dc35e9 100644
+--- a/browser/base/content/browser-main.js
++++ b/browser/base/content/browser-main.js
+@@ -17,6 +17,8 @@
+   }
+   Services.scriptloader.loadSubScript("chrome://browser/content/browser-pageActions.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/sidebar/browser-sidebar.js", this);
++  Services.scriptloader.loadSubScript("chrome://browser/content/sidebar/sidebar-secondary.js", this);
++  Services.scriptloader.loadSubScript("chrome://browser/content/sidebar/sidebar-workspaces.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/browser-customtitlebar.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/browser-unified-extensions.js", this);
+   Services.scriptloader.loadSubScript("chrome://browser/content/tabbrowser/drag-and-drop.js", this);
+diff --git a/browser/base/content/main-popupset.inc.xhtml b/browser/base/content/main-popupset.inc.xhtml
+index b45397fdc3..f2828cb417 100644
+--- a/browser/base/content/main-popupset.inc.xhtml
++++ b/browser/base/content/main-popupset.inc.xhtml
+@@ -476,7 +476,8 @@
+     <menuitem id="toolbar-context-customize-sidebar"
+               data-l10n-id="toolbar-context-customize-sidebar"/>
+     <menuitem id="toolbar-context-toggle-vertical-tabs"
+-              data-l10n-id="toolbar-context-turn-on-vertical-tabs"/>
++              data-l10n-id="toolbar-context-turn-on-vertical-tabs"
++              hidden="true"/>
+     <menuseparator id="sidebarRevampSeparator"/>
+     <menuitem id="toolbar-context-move-to-panel"
+               data-lazy-l10n-id="toolbar-context-menu-pin-to-overflow-menu"
+@@ -506,6 +507,10 @@
+               contexttype="toolbaritem"/>
+     <menuseparator id="customizationMenuSeparator"/>
+     <menuseparator id="viewToolbarsMenuSeparator"/>
++    <menuitem id="toolbar-context-autohide-toolbar"
++              type="checkbox"
++              label="Auto-hide toolbar"
++              oncommand="gSidebarSecondary.toggleAutoHideToolbar();"/>
+     <menuitem id="toolbar-context-customize"
+               observes="cmd_CustomizeToolbars"
+               class="viewCustomizeToolbar"
+diff --git a/browser/components/customizableui/ToolbarContextMenu.sys.mjs b/browser/components/customizableui/ToolbarContextMenu.sys.mjs
+index d5fd707b98..a2c2e32552 100644
+--- a/browser/components/customizableui/ToolbarContextMenu.sys.mjs
++++ b/browser/components/customizableui/ToolbarContextMenu.sys.mjs
+@@ -251,21 +251,15 @@ export var ToolbarContextMenu = {
+     let toggleVerticalTabsItem = document.getElementById(
+       "toolbar-context-toggle-vertical-tabs"
+     );
+-    toggleVerticalTabsItem.hidden = !showSidebarActions;
++    toggleVerticalTabsItem.hidden = true;
+     document.l10n.setAttributes(
+       toggleVerticalTabsItem,
+       gBrowser.tabContainer?.verticalMode
+         ? "toolbar-context-turn-off-vertical-tabs"
+         : "toolbar-context-turn-on-vertical-tabs"
+     );
+-    document.getElementById("toolbar-context-customize-sidebar").hidden =
+-      !sidebarRevampEnabled ||
+-      (toolbarItem?.id != "sidebar-button" &&
+-        !gBrowser.tabContainer?.verticalMode) ||
+-      (!["tabbrowser-tabs", "sidebar-button"].includes(toolbarItem?.id) &&
+-        gBrowser.tabContainer?.verticalMode);
+-    document.getElementById("sidebarRevampSeparator").hidden =
+-      !showSidebarActions || isVerticalTabStripMenu;
++    document.getElementById("toolbar-context-customize-sidebar").hidden = true;
++    document.getElementById("sidebarRevampSeparator").hidden = true;
+     document.getElementById("customizationMenuSeparator").hidden =
+       toolbarItem?.id == "tabbrowser-tabs" ||
+       (toolbarItem?.localName == "toolbarspring" &&
+@@ -301,7 +295,7 @@ export var ToolbarContextMenu = {
+     // space items. But we need to ensure its hidden state is reset in the case
+     // the context menu is subsequently opened on a non-flexible space item.
+     let menuSeparator = document.getElementById("tabbarItemsMenuSeparator");
+-    menuSeparator.hidden = false;
++    menuSeparator.hidden = true;
+ 
+     document.getElementById("toolbarNavigatorItemsMenuSeparator").hidden =
+       !showTabStripItems;
+diff --git a/browser/components/sidebar/jar.mn b/browser/components/sidebar/jar.mn
+index 77220bda75..960a7d0710 100644
+--- a/browser/components/sidebar/jar.mn
++++ b/browser/components/sidebar/jar.mn
+@@ -25,3 +25,6 @@ browser.jar:
+     content/browser/sidebar/sidebar-tab-list.mjs
+     content/browser/sidebar/sidebar-tab-row.css
+     content/browser/sidebar/sidebar.css
++    content/browser/sidebar/sidebar-secondary.js
++    content/browser/sidebar/sidebar-secondary.css
++    content/browser/sidebar/sidebar-workspaces.js
+diff --git a/browser/components/sidebar/moz.build b/browser/components/sidebar/moz.build
+index 83692e0651..86ad8751af 100644
+--- a/browser/components/sidebar/moz.build
++++ b/browser/components/sidebar/moz.build
+@@ -12,6 +12,8 @@ BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.toml"]
+ 
+ MOZ_SRC_FILES += [
+     "SidebarManager.sys.mjs",
++    "SidebarSecondary.sys.mjs",
++    "SidebarSecondaryData.sys.mjs",
+     "SidebarState.sys.mjs",
+     "SidebarTreeView.sys.mjs",
+ ]
+diff --git a/browser/components/sidebar/sidebar-customize.mjs b/browser/components/sidebar/sidebar-customize.mjs
+index 052be9f47c..9494c91af5 100644
+--- a/browser/components/sidebar/sidebar-customize.mjs
++++ b/browser/components/sidebar/sidebar-customize.mjs
+@@ -218,48 +218,6 @@ export class SidebarCustomize extends SidebarPage {
+         </sidebar-panel-header>
+         <div class="sidebar-panel-scrollable-content">
+           <moz-fieldset class="customize-group no-end-margin" data-l10n-id="sidebar-settings">
+-            <moz-checkbox
+-              type="checkbox"
+-              id="vertical-tabs"
+-              name="verticalTabs"
+-              iconsrc="chrome://browser/skin/sidebar-collapsed.svg"
+-              data-l10n-id="sidebar-vertical-tabs"
+-              @change=${this.#handleTabDirectionChange}
+-              ?checked=${this.verticalTabsEnabled}
+-            >
+-            ${when(
+-              this.verticalTabsEnabled,
+-              () => html`
+-                ${when(
+-                  this.expandOnHoverEnabled,
+-                  () => html`
+-                    <moz-checkbox
+-                      slot="nested"
+-                      type="checkbox"
+-                      id="expand-on-hover"
+-                      name="expand-on-hover"
+-                      data-l10n-id="expand-sidebar-on-hover"
+-                      @change=${this.#toggleExpandOnHover}
+-                      ?checked=${this.getWindow().SidebarController._state
+-                        .revampVisibility === "expand-on-hover"}
+-                      ?disabled=${this.visibility == "hide-sidebar"}
+-                    ></moz-checkbox>
+-                  `
+-                )}
+-                <moz-checkbox
+-                  slot="nested"
+-                  type="checkbox"
+-                  id="hide-sidebar"
+-                  name="hideSidebar"
+-                  data-l10n-id="sidebar-hide-tabs-and-sidebar"
+-                  @change=${this.#handleVisibilityChange}
+-                  ?checked=${this.visibility == "hide-sidebar"}
+-                  ?disabled=${this.getWindow().SidebarController._state
+-                    .revampVisibility === "expand-on-hover"}
+-                ></moz-checkbox>
+-              `
+-            )}
+-            </moz-checkbox>
+           </moz-fieldset>
+           <moz-fieldset class="customize-group medium-top-margin no-label">
+             <moz-checkbox
+diff --git a/browser/components/sidebar/sidebar-main.mjs b/browser/components/sidebar/sidebar-main.mjs
+index 973fcffe18..c8fc988b3d 100644
+--- a/browser/components/sidebar/sidebar-main.mjs
++++ b/browser/components/sidebar/sidebar-main.mjs
+@@ -781,6 +781,141 @@ export default class SidebarMain extends MozLitElement {
+     return container && !container.hidden;
+   }
+ 
++  // --- Arjuna Workspaces: container-based workspace switching ---
++  _activeWorkspace = null; // null = all tabs
++
++  _colorMap = {
++    blue: "#37adff", turquoise: "#00c79a", green: "#51cd00",
++    yellow: "#ffcb00", orange: "#ff9f00", red: "#ff613d",
++    pink: "#ff4bda", purple: "#af51f5",
++  };
++
++  _switchWorkspace(userContextId) {
++    this._activeWorkspace = userContextId;
++    const tabs = window.gBrowser.tabs;
++    console.log("[Workspaces] total tabs:", tabs.length);
++    for (const t of tabs) {
++      const cid = parseInt(t.getAttribute("usercontextid") || "0", 10);
++      console.log("[Workspaces]  tab:", t.label, "cid:", cid, "hidden:", t.hidden, "selected:", t.selected);
++    }
++
++    if (userContextId === null) {
++      for (const tab of tabs) {
++        tab.removeAttribute("hidden");
++      }
++      window.gBrowser.tabContainer._invalidateCachedVisibleTabs();
++      for (const group of window.gBrowser.tabGroups) {
++        group.style.display = "";
++      }
++      this.requestUpdate();
++      return;
++    }
++
++    // Remember last active tab per container
++    if (!this._lastTabPerContainer) {
++      this._lastTabPerContainer = {};
++    }
++    // Save current tab for the container we're leaving
++    if (this._previousWorkspace !== undefined) {
++      this._lastTabPerContainer[this._previousWorkspace] = window.gBrowser.selectedTab;
++    }
++    this._previousWorkspace = userContextId;
++
++    // Find target tab: last seen in this container, or first available, or create new
++    let targetTab = this._lastTabPerContainer[userContextId];
++    if (!targetTab || targetTab.closing || parseInt(targetTab.getAttribute("usercontextid") || "0", 10) !== userContextId) {
++      targetTab = Array.from(tabs).find(t => {
++        const id = parseInt(t.getAttribute("usercontextid") || "0", 10);
++        return id === userContextId && !t.closing;
++      });
++    }
++
++    if (!targetTab) {
++      targetTab = window.gBrowser.addTrustedTab("about:newtab", {
++        userContextId,
++      });
++    }
++
++    // First: hide/show tabs
++    for (const tab of tabs) {
++      const tabId = parseInt(tab.getAttribute("usercontextid") || "0", 10);
++      if (tabId === userContextId) {
++        tab.removeAttribute("hidden");
++      } else {
++        tab.setAttribute("hidden", "true");
++      }
++    }
++    window.gBrowser.tabContainer._invalidateCachedVisibleTabs();
++
++    // Hide/show groups
++    for (const group of window.gBrowser.tabGroups) {
++      const hasMatch = group.tabs.some(t => {
++        const id = parseInt(t.getAttribute("usercontextid") || "0", 10);
++        return id === userContextId;
++      });
++      group.style.display = hasMatch ? "" : "none";
++    }
++
++    // LAST: select the target tab after all visibility changes
++    window.gBrowser.selectedTab = targetTab;
++
++    this.requestUpdate();
++  }
++
++  _addWorkspace() {
++    window.openPreferences("paneContainers");
++  }
++
++  workspaceButtons() {
++    let identities = [];
++    try {
++      identities = window.ContextualIdentityService.getPublicIdentities();
++    } catch (e) {
++      console.error("[Workspaces] Failed to get identities:", e);
++      return html``;
++    }
++
++    const allBtn = html`
++      <div
++        class="workspace-icon"
++        title="All tabs"
++        style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:4px;${this._activeWorkspace === null ? 'background:color-mix(in srgb, currentColor 20%, transparent);box-shadow:0 0 4px rgba(0,0,0,0.4);' : ''}"
++        @click=${() => this._switchWorkspace(null)}
++      >
++        <div style="width:14px;height:14px;background-color:currentColor;mask:url('chrome://global/skin/icons/defaultFavicon.svg') center/contain no-repeat;"></div>
++      </div>
++    `;
++
++    const containerBtns = identities.map(identity => {
++      const color = this._colorMap[identity.color] || "currentColor";
++      const label = window.ContextualIdentityService.getUserContextLabel(identity.userContextId);
++      const isActive = this._activeWorkspace === identity.userContextId;
++      return html`
++        <div
++          class="workspace-icon"
++          title=${label}
++          style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:4px;${isActive ? 'background:color-mix(in srgb, currentColor 20%, transparent);box-shadow:0 0 4px rgba(0,0,0,0.4);' : ''}"
++          @click=${() => this._switchWorkspace(identity.userContextId)}
++        >
++          <div style="width:14px;height:14px;background-color:${color};mask:url('resource://usercontext-content/${identity.icon}.svg') center/contain no-repeat;"></div>
++        </div>
++      `;
++    });
++
++    const addBtn = html`
++      <div
++        class="workspace-icon"
++        title="New container"
++        style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:4px;"
++        @click=${() => this._addWorkspace()}
++      >
++        <div style="width:14px;height:14px;background-color:currentColor;mask:url('chrome://global/skin/icons/plus.svg') center/contain no-repeat;"></div>
++      </div>
++    `;
++
++    return html`${allBtn}${containerBtns}${addBtn}`;
++  }
++
+   render() {
+     /* Add 1 to tools and extensions count for "Customize sidebar" option */
+     let enabledToolsAndExtensionsCount =
+@@ -803,75 +938,8 @@ export default class SidebarMain extends MozLitElement {
+       />
+       <div class="wrapper">
+         <slot name="tabstrip"></slot>
+-        ${when(
+-          ((enabledToolsAndExtensionsCount > 2 && !this.expanded) ||
+-            this.expanded) &&
+-            window.SidebarController.sidebarRevampVisibility !==
+-              "expand-on-hover" &&
+-            window.SidebarController.sidebarVerticalTabsEnabled,
+-          () => html`${this.toolsSplitter}`
+-        )}
+-        <div
+-          class="buttons-wrapper"
+-          ?overflowing=${this.shouldShowOverflowButton}
+-        >
+-          <button-group
+-            class="tools-and-extensions actions-list"
+-            orientation=${this.isToolsOverflowing() ? "horizontal" : "vertical"}
+-            overflowing=${ifDefined(this.shouldShowOverflowButton)}
+-          >
+-            ${when(!this.isToolsOverflowing(), () =>
+-              repeat(
+-                this.getToolsAndExtensions().values(),
+-                action => action.view,
+-                action => this.entrypointTemplate(action)
+-              )
+-            )}
+-            ${when(window.SidebarController.sidebarVerticalTabsEnabled, () =>
+-              repeat(
+-                this.bottomActions,
+-                action => action.view,
+-                action => this.entrypointTemplate(action)
+-              )
+-            )}
+-            ${when(this.isToolsOverflowing(), () =>
+-              repeat(
+-                this.getToolsAndExtensions().values(),
+-                action => action.view,
+-                action => this.entrypointTemplate(action)
+-              )
+-            )}
+-          </button-group>
+-          ${when(
+-            !window.SidebarController.sidebarVerticalTabsEnabled,
+-            () =>
+-              html` <div class="bottom-actions actions-list">
+-                ${repeat(
+-                  this.bottomActions,
+-                  action => action.view,
+-                  action => this.entrypointTemplate(action)
+-                )}
+-              </div>`
+-          )}
+-          <button-group
+-            class="tools-and-extensions actions-list overflow-button"
+-            orientation="vertical"
+-            part="overflow-button"
+-            ?hidden=${!this.shouldShowOverflowButton}
+-          >
+-            <moz-button
+-              class="more-tools-button"
+-              type=${this.isOverflowMenuOpen ? "icon" : "icon ghost"}
+-              aria-pressed=${this.isOverflowMenuOpen}
+-              @click=${window.SidebarController.sidebarRevampVisibility ===
+-              "expand-on-hover"
+-                ? nothing
+-                : this.showOverflowMenu}
+-              title=${moreToolsTooltip}
+-              .iconSrc=${"chrome://global/skin/icons/chevron.svg"}
+-            >
+-            </moz-button>
+-          </button-group>
++        <div class="workspace-bar" style="display:flex;flex-direction:row;align-items:center;justify-content:center;padding:4px;gap:2px;flex-wrap:wrap;border-top:1px solid var(--chrome-content-separator-color);">
++          ${this.workspaceButtons()}
+         </div>
+       </div>
+     `;
+diff --git a/browser/moz.configure b/browser/moz.configure
+index e0946a23cd..05711f1475 100644
+--- a/browser/moz.configure
++++ b/browser/moz.configure
+@@ -14,6 +14,7 @@ imply_option("MOZ_PROFILE_MIGRATOR", True)
+ 
+ 
+ imply_option("MOZ_APP_VENDOR", "Mozilla")
++imply_option("MOZ_APP_UA_NAME", "Firefox")
+ imply_option("MOZ_APP_ID", "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}")
+ # Include the DevTools client, not just the server (which is the default)
+ imply_option("MOZ_DEVTOOLS", "all")
+diff --git a/browser/themes/shared/browser-shared.css b/browser/themes/shared/browser-shared.css
+index 4e7ca6259c..70227a996b 100644
+--- a/browser/themes/shared/browser-shared.css
++++ b/browser/themes/shared/browser-shared.css
+@@ -25,6 +25,7 @@
+ @import url("chrome://browser/skin/places/editBookmarkPanel.css");
+ @import url("chrome://browser/skin/searchbar.css");
+ @import url("chrome://browser/skin/sidebar.css");
++@import url("chrome://browser/content/sidebar/sidebar-secondary.css");
+ @import url("chrome://browser/skin/urlbar-variables.css");
+ @import url("chrome://browser/skin/aiWindowSidebar.css");
+ @import url("chrome://browser/skin/customizableui/customizeMode.css");

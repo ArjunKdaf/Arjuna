@@ -1,0 +1,23 @@
+# Arjuna Browser build config
+
+# Use Arjuna branding
+ac_add_options --with-branding=browser/branding/arjuna
+ac_add_options --with-app-name=arjuna
+ac_add_options --with-app-basename=Arjuna
+
+# Release build
+ac_add_options --enable-release
+ac_add_options --disable-tests
+ac_add_options --disable-updater
+
+# NixOS: libclang path for rust bindings
+ac_add_options --with-libclang-path=/nix/store/bljp5s9sb7kz2yfz4g1mix0g7n00lpdv-clang-21.1.7-lib/lib
+
+# Fixed parallel jobs to avoid OOM on 16GB RAM
+mk_add_options MOZ_PARALLEL_BUILD=2
+
+# Limit linker parallelism separately (linking eats ~3GB each)
+mk_add_options MOZ_PARALLEL_LINK=1
+
+# NixOS build workaround: wasi-sdk not available (does NOT affect browser security)
+ac_add_options --without-wasm-sandboxed-libraries

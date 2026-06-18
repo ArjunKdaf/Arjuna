@@ -1,0 +1,19 @@
+diff --git a/mozconfig b/mozconfig
+--- a/mozconfig
++++ b/mozconfig
+@@ -9,3 +9,12 @@
+ ac_add_options --enable-release
+ ac_add_options --disable-tests
+ ac_add_options --disable-updater
++
++# NixOS: libclang path for rust bindings (update path for your system)
++# Run: find /nix/store -name "libclang.so" -path "*/lib/*" | head -1
++# Then set the directory containing it below:
++ac_add_options --with-libclang-path=/nix/store/2hn01gz32n3axgmzrcclivngcgkcxqbm-clang-21.1.7-lib/lib
++
++# NixOS: wasi-sdk not available
++ac_add_options --without-wasm-sandboxed-libraries
++
++# Adjust parallel jobs for your RAM (each link uses ~3GB)
++mk_add_options MOZ_PARALLEL_BUILD=2
++mk_add_options MOZ_PARALLEL_LINK=1
