@@ -1,6 +1,6 @@
 # Arjuna Browser
 
-**A design experiment exploring what a power-user browser should feel like.**
+**A design experiment exploring what I think a browser should feel like.**
 
 Arjuna is a Firefox 149.0.2 fork built as a personal vision for browser UX — not a production browser. It was created to explore ideas around workspaces, dual sidebars, auto-hiding UI, and a distraction-free browsing experience. This is the final release.
 
